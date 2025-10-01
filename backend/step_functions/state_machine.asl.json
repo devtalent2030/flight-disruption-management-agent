@@ -1,0 +1,15 @@
+{
+  "Comment": "FDMA simple orchestration",
+  "StartAt": "FindImpacted",
+  "States": {
+    "FindImpacted": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "impacted_pnr_finder",
+        "Payload.$": "$"
+      },
+      "End": true
+    }
+  }
+}

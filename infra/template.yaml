@@ -1,0 +1,37 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: FDMA - minimal SAM template
+
+Globals:
+  Function:
+    Runtime: python3.11
+    Timeout: 30
+    MemorySize: 256
+
+Resources:
+  EventSimulator:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: event_simulator
+      Handler: handler.handler
+      CodeUri: ../backend/lambdas/event_simulator
+      Policies:
+        - AWSLambdaBasicExecutionRole
+
+  ImpactedPNRFinder:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: impacted_pnr_finder
+      Handler: handler.handler
+      CodeUri: ../backend/lambdas/impacted_pnr_finder
+      Policies:
+        - AWSLambdaBasicExecutionRole
+
+  FdmaStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: fdma_state_machine
+      DefinitionUri: ../backend/step_functions/state_machine.asl.json
+      Policies:
+        - LambdaInvokePolicy:
+            FunctionName: !Ref ImpactedPNRFinder
