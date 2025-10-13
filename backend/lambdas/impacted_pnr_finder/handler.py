@@ -1,12 +1,6 @@
 import json
-
 def handler(event, context):
-    body = event.get("body") if isinstance(event, dict) else {}
-    if isinstance(body, str):
-        try:
-            body = json.loads(body)
-        except Exception:
-            body = {}
-    flight = body.get("flight_no", "FD123")
-    impacted = [{"pnr": "ABC123", "passenger": "Jane Doe"}, {"pnr": "XYZ789", "passenger": "John Lee"}]
-    return {"statusCode": 200, "body": json.dumps({"flight_no": flight, "impacted": impacted})}
+    """Return mock PNRs impacted by flight_id."""
+    flight_id = event["detail"]["flight_id"] if "detail" in event else event.get("flight_id","AB123")
+    impacted = [{"pnr_id":"PNR001","passenger_id":"P001","flight_id":flight_id}]
+    return {"impacted": impacted}

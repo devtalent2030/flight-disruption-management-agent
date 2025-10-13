@@ -1,25 +1,90 @@
 <!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>FDMA Offer</title>
-    <style>
-      body { font-family: system-ui, sans-serif; margin: 2rem; }
-      .card { border: 1px solid #ddd; border-radius: 12px; padding: 1rem; max-width: 640px; }
-      button { padding: 0.6rem 1rem; border-radius: 8px; border: 1px solid #333; cursor: pointer; margin-right: .5rem; }
-    </style>
-  </head>
-  <body>
-    <div class="card">
-      <h1>Rebooking Options</h1>
-      <p>Option A — FD123 YYZ → YVR 13:00 (Direct)</p>
-      <p>Option B — FD321 YYZ → YUL → YVR 12:30 (1 stop)</p>
-      <div>
-        <button onclick="alert('Accepted Option A')">Accept</button>
-        <button onclick="alert('Show Next Option')">Next</button>
-        <button onclick="alert('Declined')">Decline</button>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Rebooking Offer</title>
+  <link rel="stylesheet" href="./app.css" />
+</head>
+<body>
+  <main id="app" class="container">
+    <header class="header">
+      <div class="brand">✈️ FDMA</div>
+      <div id="countdown" aria-live="polite"></div>
+    </header>
+
+    <section id="card" class="card" aria-busy="true">
+      <h1 id="title">Checking your offer…</h1>
+      <div id="summary" class="summary"></div>
+
+      <div id="actions" class="actions hidden">
+        <button id="btn-accept" class="btn primary">Accept</button>
+        <button id="btn-next"   class="btn">See next</button>
+        <button id="btn-decline" class="btn danger">Decline for voucher</button>
+      </div>
+
+      <div id="notice" class="notice"></div>
+    </section>
+  </main>
+
+  <footer class="footer">
+  <div id="filmstack" class="filmstack" aria-hidden="true"></div>
+  <div class="footer-meta">
+    <!-- Card 1: About Blurb -->
+    <div class="card footer-card">
+      <div class="card-inner">
+        <h3>Airline Demo: Seamless Skies</h3>
+        <p>At Airline Demo, we're redefining travel recovery. Our AI-powered agent spots disruptions and gets you back in the air—fast, fair, and frictionless. From rebookings to vouchers, we've got your journey covered.</p>
       </div>
     </div>
-  </body>
+
+    <!-- Card 2: Disruption Tips -->
+    <div class="card footer-card">
+      <div class="card-inner">
+        <h4>Travel Tips During Delays</h4>
+        <ul>
+          <li>Stay connected: Enable notifications for real-time updates.</li>
+          <li>Pack smart: Keep essentials in carry-on for quick re-routes.</li>
+          <li>Know your rights: Automatic compensation for eligible delays.</li>
+          <li>Upgrade easy: Use vouchers toward premium seats next time.</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Card 3: CTA -->
+    <div class="card footer-card">
+      <div class="card-inner">
+        <h4>Ready to Fly?</h4>
+        <p>Experience the future of air travel. <a href="#">Book a demo flight</a> or <a href="#">join our beta</a>.</p>
+      </div>
+    </div>
+
+    <!-- Card 4: Legal & Contact -->
+    <div class="card footer-card">
+      <div class="card-inner">
+        <div class="meta-top">
+          <span>© 2025 Airline Demo. All rights reserved.</span>
+          <span class="meta-links">
+            <a href="#" aria-label="Privacy Policy">Privacy</a> •
+            <a href="#" aria-label="Terms of Service">Terms</a> •
+            <a href="#" aria-label="Cookie Policy">Cookies</a> •
+            <a href="#" aria-label="Accessibility">Accessibility</a>
+          </span>
+        </div>
+        <div class="meta-bottom">
+          <span class="contact">Questions? Call 1-800-FLY-DEMO (1-800-359-336) | Email: support@airlinedemo.com | 24/7 Support Available</span>
+          <div class="social-icons">
+            <a href="#" aria-label="X (Twitter)" title="Follow us on X">🐦</a>
+            <a href="#" aria-label="Facebook" title="Like us on Facebook">📘</a>
+            <a href="#" aria-label="Instagram" title="Follow on Instagram">📷</a>
+            <a href="#" aria-label="LinkedIn" title="Connect on LinkedIn">💼</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</footer>
+
+  <script src="./app.js"></script>
+</body>
 </html>

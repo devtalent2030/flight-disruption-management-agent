@@ -1,14 +1,19 @@
-import json, uuid
-from datetime import datetime
+import os, json, boto3, time, uuid
+bus = os.getenv("EVENT_BUS", "default")
+evb = boto3.client("events")
 
 def handler(event, context):
-    payload = {
+    """Simulate a disruption event."""
+    detail = {
         "event_id": str(uuid.uuid4()),
-        "type": event.get("type", "DELAY"),
-        "flight_no": event.get("flight_no", "FD123"),
-        "dep": event.get("dep", "YYZ"),
-        "arr": event.get("arr", "YVR"),
-        "delay_min": event.get("delay_min", 45),
-        "ts": datetime.utcnow().isoformat() + "Z"
+        "flight_id": event.get("flight_id","AB123"),
+        "status": event.get("status","CANCELLED"),
+        "timestamp": int(time.time()*1000),
     }
-    return {"statusCode": 200, "body": json.dumps(payload)}
+    evb.put_events(Entries=[{
+        "Source":"fdma.simulator",
+        "DetailType":"flight.status_changed",
+        "Detail": json.dumps(detail),
+        "EventBusName": bus
+    }])
+    return {"ok": True, "detail": detail}
