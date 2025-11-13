@@ -1,71 +1,23 @@
-name: CI / build-test
-
+name: CI
 on:
   pull_request:
-    branches: [ main ]
   push:
-    branches: [ dev ]
-
+    branches: [ main, develop, "feature/**" ]
 jobs:
-  backend:
-    name: Backend (SAM + Python)
+  build-test:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: infra
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-
-      - name: Install SAM CLI
+          python-version: "3.11"
+      - name: Install deps
         run: |
-          pipx install aws-sam-cli
-          sam --version
-
-      - name: Build SAM (no deploy)
-        run: sam build --cached
-
-      - name: Validate template
-        run: sam validate --lint
-
-  frontend:
-    name: Frontend (static page)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      # If you created a proper npm project under frontend/, keep these steps.
-      # If your frontend is just a plain index.html with no build tooling, we just assert the file exists.
-      - name: Detect frontend type
-        id: detect
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+      - name: Lint
         run: |
-          if [ -f frontend/package.json ]; then
-            echo "type=node" >> $GITHUB_OUTPUT
-          else
-            echo "type=static" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Node build
-        if: steps.detect.outputs.type == 'node'
-        working-directory: frontend
-        run: |
-          corepack enable
-          npm ci
-          npm run build
-
-      - name: Static smoke check
-        if: steps.detect.outputs.type == 'static'
-        run: |
-          test -f frontend/index.html
-          echo "Static frontend present ✅"
-
-  # Gate the PR on both jobs
-  all-green:
-    runs-on: ubuntu-latest
-    needs: [backend, frontend]
-    steps:
-      - run: echo "All checks passed ✅"
+          python -m pip install ruff
+          ruff check backend
+      - name: Tests
+        run: pytest -q
