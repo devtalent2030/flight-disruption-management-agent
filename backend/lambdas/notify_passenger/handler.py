@@ -1,8 +1,25 @@
-import os, boto3
-sns = boto3.client("sns")
-def handler(event, context):
-    link = f"{os.getenv('FRONTEND_URL','https://offer.example.com')}?token={event['token']}"
+import os
+
+import boto3
+
+_sns = boto3.client("sns")
+
+
+def handler(event, _context):
+    """
+    Expects:
+    {
+      "link":"https://example.com/offer?...",
+      "passenger":{"email":"..."}
+    }
+    """
+    link = event.get("link", "")
+    email = (event.get("passenger") or {}).get("email", "")
     msg = f"Your flight changed. Review options: {link}"
+
     topic = os.getenv("ALERT_TOPIC_ARN")
-    if topic: sns.publish(TopicArn=topic, Message=msg, Subject="FDMA Offer")
-    return {"notified": True, "link": link}
+    if topic:
+        _sns.publish(TopicArn=topic, Message=msg, Subject="FDMA Offer")
+
+    # MOCK mode: just log-like payload back
+    return {"notified": True, "email": email, "link": link}

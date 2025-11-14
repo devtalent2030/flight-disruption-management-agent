@@ -1,19 +1,26 @@
-import os, json, boto3, time, uuid
-bus = os.getenv("EVENT_BUS", "default")
-evb = boto3.client("events")
+import os
+import time
+import uuid
 
-def handler(event, context):
-    """Simulate a disruption event."""
-    detail = {
-        "event_id": str(uuid.uuid4()),
-        "flight_id": event.get("flight_id","AB123"),
-        "status": event.get("status","CANCELLED"),
-        "timestamp": int(time.time()*1000),
+import boto3
+
+_EVENT_BUS = os.getenv("EVENT_BUS", "default")
+_evb = boto3.client("events")
+
+
+def handler(event, _context):
+    # Minimal synthetic “disruption” event
+    entry = {
+        "Source": "fdma.simulator",
+        "DetailType": "FlightDisruption",
+        "Detail": __import__("json").dumps(
+            {
+                "id": f"SIM-{uuid.uuid4().hex[:12]}",
+                "flightId": event.get("flightId", "AB123"),
+                "disruptedAt": int(time.time()),
+            }
+        ),
+        "EventBusName": _EVENT_BUS,
     }
-    evb.put_events(Entries=[{
-        "Source":"fdma.simulator",
-        "DetailType":"flight.status_changed",
-        "Detail": json.dumps(detail),
-        "EventBusName": bus
-    }])
-    return {"ok": True, "detail": detail}
+    resp = _evb.put_events(Entries=[entry])
+    return {"put": resp.get("Entries", []), "failed": resp.get("FailedEntryCount", 0)}
