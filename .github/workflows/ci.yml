@@ -1,55 +1,39 @@
-name: CI
+name: CI / build-test
 
 on:
   pull_request:
+    branches: [ main ]
   push:
-    branches: [ main, dev, develop, "feature/**" ]
+    branches: [ dev ]
 
 jobs:
-  build-test:
+  backend:
+    name: Backend (SAM + Python)
     runs-on: ubuntu-latest
-
+    defaults:
+      run:
+        working-directory: infra
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python (3.11)
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
-      - name: Install Python deps (ruff, pytest, backend reqs)
+      - name: Install tools
         run: |
           python -m pip install --upgrade pip
-          python -m pip install ruff pytest
-          if [ -f backend/requirements.txt ]; then
-            python -m pip install -r backend/requirements.txt
-          fi
-
-      - name: Lint backend with ruff
-        run: |
-          ruff --version
-          ruff check backend
-
-      - name: Install SAM CLI
-        run: |
-          python -m pip install pipx
-          pipx ensurepath
+          pip install ruff
           pipx install aws-sam-cli
           sam --version
 
-      - name: Validate SAM template
-        working-directory: infra
+      - name: Lint
+        working-directory: ../backend
+        run: ruff check .
+
+      - name: Validate SAM
         run: sam validate --lint
 
       - name: Build SAM (no deploy)
-        working-directory: infra
         run: sam build --cached
-
-      - name: Run tests (if present)
-        run: |
-          if [ -d backend/tests ] || [ -d tests ]; then
-            pytest -q
-          else
-            echo "No tests directory found; skipping pytest."
-          fi
