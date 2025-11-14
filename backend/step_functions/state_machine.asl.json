@@ -1,14 +1,35 @@
 {
-  "Comment": "FDMA simple orchestration",
-  "StartAt": "FindImpacted",
+  "Comment": "FDMA Disruption Orchestrator",
+  "StartAt": "ImpactedPNRFinder",
   "States": {
-    "FindImpacted": {
+    "ImpactedPNRFinder": {
       "Type": "Task",
-      "Resource": "arn:aws:states:::lambda:invoke",
-      "Parameters": {
-        "FunctionName": "impacted_pnr_finder",
-        "Payload.$": "$"
-      },
+      "Resource": "arn:aws:lambda:REGION:ACCOUNT:function:impacted_pnr_finder",
+      "Next": "OptionsScoring"
+    },
+    "OptionsScoring": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:REGION:ACCOUNT:function:options_scoring",
+      "ResultPath": "$.options",
+      "Next": "HasOptions"
+    },
+    "HasOptions": {
+      "Type": "Choice",
+      "Choices": [{ "Variable": "$.options.length", "NumericGreaterThan": 0, "Next": "CreateOffer" }],
+      "Default": "IssueVoucher"
+    },
+    "CreateOffer": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:REGION:ACCOUNT:function:create_offer",
+      "Next": "NotifyPassenger"
+    },
+    "NotifyPassenger": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:REGION:ACCOUNT:function:notify_passenger",
+      "End": true
+    },
+    "IssueVoucher": {
+      "Type": "Pass",
       "End": true
     }
   }
