@@ -1,8 +1,6 @@
-def score_option(opt: dict) -> int:
-    score = 0
-    score += 50 if opt.get("stops", 1) == 0 else 0
-    score += 20 if opt.get("same_cabin", False) else 0
-    score += 20 if opt.get("mct_ok", False) else 0
-    diff = opt.get("arrival_diff_min", 120)
-    score += max(0, 20 - min(diff, 20))
-    return score
+def score_options(pnr):
+    """Return ranked rebooking options (mock)."""
+    return [
+        {"flightNo":"AB456","origin":"YYZ","destination":"YVR","dep":"10:05","arr":"12:25","stops":0,"cabin":"Economy","arrivalDelta":45},
+        {"flightNo":"AB789","origin":"YYZ","destination":"YVR","dep":"12:30","arr":"14:50","stops":1,"cabin":"Economy","arrivalDelta":180},
+    ]
