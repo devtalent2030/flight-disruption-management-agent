@@ -1,26 +1,57 @@
+from __future__ import annotations
+
 import os
 import time
 import uuid
+from typing import Any, Dict, Optional
 
 import boto3
 
-_EVENT_BUS = os.getenv("EVENT_BUS", "default")
-_evb = boto3.client("events")
+# Optional: if EVENT_BUS is set, we put to EventBridge; otherwise we just return a payload
+EVENT_BUS = os.getenv("EVENT_BUS", "")
+_events = boto3.client("events") if EVENT_BUS else None
 
 
-def handler(event, _context):
-    # Minimal synthetic “disruption” event
-    entry = {
-        "Source": "fdma.simulator",
-        "DetailType": "FlightDisruption",
-        "Detail": __import__("json").dumps(
-            {
-                "id": f"SIM-{uuid.uuid4().hex[:12]}",
-                "flightId": event.get("flightId", "AB123"),
-                "disruptedAt": int(time.time()),
-            }
-        ),
-        "EventBusName": _EVENT_BUS,
+def lambda_handler(event: Dict[str, Any], _context: Any) -> Dict[str, Any]:
+    """
+    Demo generator for a flight disruption input.
+    Input (optional):
+      {
+        "flightNo": "AB123",
+        "reason": "WX"  # free text
+      }
+    Output:
+      {
+        "flightNo": "...",
+        "disruption": {"reason":"...","occurredAt":"<epoch>"},
+        "correlationId": "SIM-..."
+      }
+    """
+    flight_no = event.get("flightNo", "AB123")
+    reason = event.get("reason", "IRREGULAR_OPS")
+    payload = {
+        "flightNo": flight_no,
+        "disruption": {"reason": reason, "occurredAt": int(time.time())},
+        "correlationId": f"SIM-{uuid.uuid4()}",
     }
-    resp = _evb.put_events(Entries=[entry])
-    return {"put": resp.get("Entries", []), "failed": resp.get("FailedEntryCount", 0)}
+
+    if _events:
+        _events.put_events(
+            Entries=[
+                {
+                    "Source": "fdm.simulator",
+                    "DetailType": "FlightDisruption",
+                    "Detail": json_dumps(payload),
+                    "EventBusName": EVENT_BUS,
+                }
+            ]
+        )
+
+    return payload
+
+
+def json_dumps(data: Dict[str, Any]) -> str:
+    # Tiny local helper avoids importing json at module top if you care about cold start micro-optimizations
+    import json  # noqa: WPS433
+
+    return json.dumps(data)

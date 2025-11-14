@@ -1,132 +1,136 @@
-import hashlib
+from __future__ import annotations
+
+import json
 import os
 import time
-from typing import Dict, Any
+from typing import Any, Dict, Optional, Tuple
 
 import boto3
 
-_ddb = boto3.resource("dynamodb")
-_table = _ddb.Table(os.getenv("OFFERS_TABLE", "Offers"))
+from common.crypto import sign_token
 
-_SIG_SECRET = os.getenv("LINK_SIG_SECRET", "dev-secret")
+ddb = boto3.resource("dynamodb")
+offers = ddb.Table(os.getenv("OFFERS_TABLE", "Offers"))
+events = ddb.Table(os.getenv("EVENTS_TABLE", "Events"))
+
+TOKEN_SECRET = os.getenv("TOKEN_SECRET", "")
 
 
-def _res(code: int, body: Dict[str, Any]):
+def _res(status: int, body: Dict[str, Any]) -> Dict[str, Any]:
     return {
-        "statusCode": code,
-        "headers": {"content-type": "application/json"},
-        "body": __import__("json").dumps(body),
+        "statusCode": status,
+        "headers": {"Content-Type": "application/json"},
+        "body": json.dumps(body),
     }
 
 
-def _verify(sig: str, offer_id: str, exp: int) -> bool:
-    payload = f"{offer_id}:{exp}:{_SIG_SECRET}".encode("utf-8")
-    expected = hashlib.sha256(payload).hexdigest()
-    if not __eq_const(sig, expected):
-        return False
-    if int(time.time()) > int(exp):
-        return False
-    return True
+def _verify_params(event: Dict[str, Any]) -> Tuple[Optional[str], Optional[str], Optional[int], Optional[str]]:
+    """Extract and basic-verify offerId, token, exp, sig."""
+    params = event.get("queryStringParameters") or {}
+    offer_id = params.get("offerId")
+    sig = params.get("sig")
+    exp_str = params.get("exp")
+    token = None
+    path_params = event.get("pathParameters") or {}
+    if "token" in path_params:
+        token = path_params["token"]
+    elif params.get("token"):
+        token = params["token"]
+
+    exp_int = None
+    if exp_str and exp_str.isdigit():
+        exp_int = int(exp_str)
+
+    return offer_id, token, exp_int, sig
 
 
-def __eq_const(a: str, b: str) -> bool:
-    # constant-time-ish comparison
-    if len(a) != len(b):
-        return False
-    out = 0
-    for x, y in zip(a.encode(), b.encode()):
-        out |= x ^ y
-    return out == 0
+def _verify_signature(offer_id: str, token: str, exp: int, sig: str) -> Optional[str]:
+    if not TOKEN_SECRET:
+        return "server TOKEN_SECRET not configured"
+    if int(time.time()) > exp:
+        return "link expired"
+    expected = sign_token(token, offer_id, exp, TOKEN_SECRET)
+    if sig != expected:
+        return "invalid signature"
+    return None
 
 
-def _get_path(event) -> str:
-    # HTTP API v2 puts it here; fallbacks for local testing
-    ctx = event.get("requestContext", {})
-    http = ctx.get("http", {})
-    return http.get("path") or event.get("path", "/")
+def _emit_event(evt_type: str, entity_id: str, payload: Dict[str, Any]) -> None:
+    events.put_item(
+        Item={
+            "eventId": f"EVT-{int(time.time()*1000)}-{evt_type}",
+            "type": evt_type,
+            "entityId": entity_id,
+            "payload": payload,
+            "createdAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
+    )
 
 
-def _get_query(event) -> Dict[str, str]:
-    return event.get("queryStringParameters") or {}
+def lambda_handler(event: Dict[str, Any], _context: Any) -> Dict[str, Any]:
+    method = event.get("httpMethod", "GET")
+    path = event.get("path", "")
 
+    offer_id, token, exp, sig = _verify_params(event)
+    if not offer_id or not token or exp is None or not sig:
+        return _res(400, {"message": "missing offerId/token/exp/sig"})
 
-def _load_offer(offer_id: str) -> Dict[str, Any]:
-    res = _table.get_item(Key={"offer_id": offer_id})
-    return res.get("Item")
+    err = _verify_signature(offer_id, token, exp, sig)
+    if err:
+        return _res(403, {"message": err})
 
-
-def handler(event, _context):
-    """
-    Routes:
-      GET  /offer/{token}?offerId=&sig=&exp=
-      POST /offer/{token}/accept
-      POST /offer/{token}/next
-      POST /offer/{token}/decline
-    (token is not used server-side; it’s included in the URL for demo UX)
-    """
-    path = _get_path(event)
-    query = _get_query(event)  # expects offerId, sig, exp
-    offer_id = (query.get("offerId") or "").strip()
-    sig = (query.get("sig") or "").strip()
-    exp = int(query.get("exp") or "0")
-
-    if not offer_id or not sig or not exp:
-        return _res(400, {"message": "offerId/sig/exp required"})
-
-    if not _verify(sig, offer_id, exp):
-        return _res(403, {"message": "link invalid or expired"})
-
-    offer = _load_offer(offer_id)
-    if not offer:
+    # Load offer
+    got = offers.get_item(Key={"offerId": offer_id}).get("Item")
+    if not got:
         return _res(404, {"message": "offer not found"})
 
-    # GET = read
-    if event.get("requestContext", {}).get("http", {}).get("method", "GET") == "GET":
-        idx = offer.get("current_index", 0)
-        options = offer.get("options", [])
-        current = options[idx] if 0 <= idx < len(options) else None
+    # Normalize selectedIndex & options
+    options = got.get("options") or []
+    sel = got.get("selectedIndex", None)
+
+    # Route handling
+    if method == "GET" and path.endswith(f"/offer/{token}"):
         return _res(
             200,
             {
                 "offerId": offer_id,
-                "status": offer.get("status"),
-                "currentIndex": idx,
+                "status": got.get("status", "PENDING"),
+                "selectedIndex": sel,
                 "optionsCount": len(options),
-                "currentOption": current,
+                "expiresAt": got.get("expiresAt"),
             },
         )
 
-    # POST actions
-    route = path  # already includes /offer/... suffixes
+    if method == "POST" and path.endswith(f"/offer/{token}/next"):
+        next_idx = 0 if sel is None else sel + 1
+        if next_idx >= len(options):
+            return _res(410, {"message": "no more options"})
+        offers.update_item(
+            Key={"offerId": offer_id},
+            UpdateExpression="SET selectedIndex = :i",
+            ExpressionAttributeValues={":i": next_idx},
+        )
+        _emit_event("OFFER_NEXT", offer_id, {"index": next_idx})
+        return _res(200, {"offerId": offer_id, "selectedIndex": next_idx})
 
-    if route.endswith("/accept"):
-        _table.update_item(
-            Key={"offer_id": offer_id},
+    if method == "POST" and path.endswith(f"/offer/{token}/accept"):
+        offers.update_item(
+            Key={"offerId": offer_id},
             UpdateExpression="SET #s = :s",
             ExpressionAttributeNames={"#s": "status"},
             ExpressionAttributeValues={":s": "ACCEPTED"},
         )
-        return _res(200, {"message": "accepted", "offerId": offer_id})
+        _emit_event("OFFER_ACCEPTED", offer_id, {"selectedIndex": sel})
+        return _res(200, {"offerId": offer_id, "status": "ACCEPTED"})
 
-    if route.endswith("/decline"):
-        _table.update_item(
-            Key={"offer_id": offer_id},
+    if method == "POST" and path.endswith(f"/offer/{token}/decline"):
+        offers.update_item(
+            Key={"offerId": offer_id},
             UpdateExpression="SET #s = :s",
             ExpressionAttributeNames={"#s": "status"},
             ExpressionAttributeValues={":s": "DECLINED"},
         )
-        return _res(200, {"message": "declined", "offerId": offer_id})
+        _emit_event("OFFER_DECLINED", offer_id, {})
+        return _res(200, {"offerId": offer_id, "status": "DECLINED"})
 
-    if route.endswith("/next"):
-        next_idx = offer.get("current_index", 0) + 1
-        options_len = len(offer.get("options", []))
-        if next_idx >= options_len:
-            return _res(410, {"message": "no more options"})
-        _table.update_item(
-            Key={"offer_id": offer_id},
-            UpdateExpression="SET current_index = :i",
-            ExpressionAttributeValues={":i": next_idx},
-        )
-        return _res(200, {"message": "advanced", "currentIndex": next_idx})
-
-    return _res(404, {"message": "unknown route"})
+    return _res(404, {"message": "route not found"})

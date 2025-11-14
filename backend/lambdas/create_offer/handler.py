@@ -1,66 +1,109 @@
-import hashlib
+from __future__ import annotations
+
+import decimal
 import os
 import time
 import uuid
+from datetime import datetime, timezone
+from typing import Any, Dict, List
 
 import boto3
 
-_ddb = boto3.resource("dynamodb")
-_table = _ddb.Table(os.getenv("OFFERS_TABLE", "Offers"))
+from common.crypto import generate_token, now_epoch, sign_token
 
-_LINK_BASE = os.getenv("LinkBaseUrl", "https://example.com/offer")
-_TTL_MIN = int(os.getenv("OfferTtlMinutes", "60"))
-_SIG_SECRET = os.getenv("LINK_SIG_SECRET", "dev-secret")
+dynamodb = boto3.client("dynamodb")
 
-
-def _sign(offer_id: str, exp: int) -> str:
-    payload = f"{offer_id}:{exp}:{_SIG_SECRET}".encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
+OFFERS_TABLE = os.getenv("OFFERS_TABLE", "Offers")
+EVENTS_TABLE = os.getenv("EVENTS_TABLE", "Events")
+LINK_BASE_URL = os.getenv("LINK_BASE_URL", "https://example.com/offer")
+TOKEN_SECRET = os.getenv("TOKEN_SECRET", "")
+OFFER_TTL_MINUTES = int(os.getenv("OFFER_TTL_MINUTES", "60"))
 
 
-def handler(event, _context):
-    """
-    Expects:
-    {
-      "pnrId": "PNR-AB123-001",
-      "passenger": {"id":"pax001","email":"...","name":"..."},
-      "scoredOptions": [...]
-    }
-    """
+def _iso_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _conv(v: Any) -> Dict[str, Any]:
+    if v is None:
+        return {"NULL": True}
+    if isinstance(v, bool):
+        return {"BOOL": v}
+    if isinstance(v, (int, float, decimal.Decimal)):
+        return {"N": str(v)}
+    if isinstance(v, str):
+        return {"S": v}
+    if isinstance(v, list):
+        return {"L": [_conv(x) for x in v]}
+    if isinstance(v, dict):
+        return {"M": {k: _conv(x) for k, x in v.items()}}
+    raise TypeError(f"Unsupported type: {type(v)}")
+
+
+def _to_ddb(item: Dict[str, Any]) -> Dict[str, Any]:
+    return {k: _conv(v) for k, v in item.items()}
+
+
+def lambda_handler(event: Dict[str, Any], _context: Any) -> Dict[str, Any]:
+    # Validate input
     pnr_id = event.get("pnrId")
-    passenger = event.get("passenger", {})
-    options = event.get("scoredOptions", [])
+    passenger = event.get("passenger") or {}
+    options: List[Dict[str, Any]] = event.get("scoredOptions") or []
 
-    offer_id = f"OFR-{uuid.uuid4()}"
-    now_s = int(time.time())
-    exp_s = now_s + (_TTL_MIN * 60)
-    sig = _sign(offer_id, exp_s)
+    if not pnr_id or not passenger.get("id"):
+        raise ValueError("pnrId and passenger.id are required")
+
+    has_options = len(options) > 0
+
+    offer_id = "OFR-" + str(uuid.uuid4())
+    token = generate_token(16)
+    exp_epoch = now_epoch() + OFFER_TTL_MINUTES * 60
+    signature = sign_token(token, offer_id, exp_epoch, TOKEN_SECRET)
 
     link = (
-        f"{_LINK_BASE}"
-        f"?offerId={offer_id}"
-        f"&token={uuid.uuid4().hex[:24]}"
-        f"&sig={sig}"
-        f"&exp={exp_s}"
+        f"{LINK_BASE_URL}"
+        f"?offerId={offer_id}&token={token}&sig={signature}&exp={exp_epoch}"
     )
 
-    item = {
-        "offer_id": offer_id,
-        "pnr_id": pnr_id,
-        "passenger": passenger,
+    record = {
+        "offerId": offer_id,
+        "pnrId": pnr_id,
+        "passengerId": passenger["id"],
         "options": options,
-        "status": "PENDING",
-        "current_index": 0,
-        "created_at": now_s,
-        "expiresAt": exp_s,  # TTL attribute
+        "selectedIndex": None,
+        "status": "NO_OPTIONS" if not has_options else "PENDING",
+        "expiresAt": exp_epoch,  # DynamoDB TTL
+        "token": token,
+        "signature": signature,
+        "createdAt": _iso_now(),
     }
-    _table.put_item(Item=item)
+
+    # Persist Offer (idempotent on offerId)
+    dynamodb.put_item(
+        TableName=OFFERS_TABLE,
+        Item=_to_ddb(record),
+        ConditionExpression="attribute_not_exists(offerId)",
+    )
+
+    # Audit event
+    ev = {
+        "eventId": "EVT-" + str(uuid.uuid4()),
+        "type": "OFFER_CREATED",
+        "entityId": offer_id,
+        "payload": {
+            "pnrId": pnr_id,
+            "passengerId": passenger["id"],
+            "hasOptions": has_options,
+        },
+        "createdAt": _iso_now(),
+    }
+    dynamodb.put_item(TableName=EVENTS_TABLE, Item=_to_ddb(ev))
 
     return {
         "offerId": offer_id,
         "pnrId": pnr_id,
         "passenger": passenger,
         "link": link,
-        "status": "PENDING",
-        "hasOptions": bool(options),
+        "status": record["status"],
+        "hasOptions": has_options,
     }
