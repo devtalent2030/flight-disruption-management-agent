@@ -9,7 +9,7 @@ Supports two channels controlled by env NOTIFY_CHANNEL:
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 import boto3
 

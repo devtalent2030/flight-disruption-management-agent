@@ -89,7 +89,13 @@ def _load_offer(offer_id: str) -> Dict[str, Any]:
     return item
 
 
-def _verify_signature(token: str, offer_id: str, exp_str: str, sig: str, item: Dict[str, Any]) -> None:
+def _verify_signature(
+    token: str,
+    offer_id: str,
+    exp_str: str,
+    sig: str,
+    item: Dict[str, Any],
+) -> None:
     try:
         exp = int(exp_str)
     except Exception as exc:  # noqa: BLE001
