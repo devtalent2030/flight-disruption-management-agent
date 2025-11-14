@@ -8,11 +8,8 @@ on:
 
 jobs:
   backend:
-    name: Backend (SAM + Python)
+    name: Backend (lint + SAM validate/build)
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: infra
     steps:
       - uses: actions/checkout@v4
 
@@ -24,16 +21,53 @@ jobs:
       - name: Install tools
         run: |
           python -m pip install --upgrade pip
-          pip install ruff
+          python -m pip install ruff
           pipx install aws-sam-cli
           sam --version
 
-      - name: Lint
-        working-directory: ../backend
+      - name: Lint backend
+        working-directory: backend
         run: ruff check .
 
-      - name: Validate SAM
+      - name: Validate SAM template
+        working-directory: infra
         run: sam validate --lint
 
       - name: Build SAM (no deploy)
+        working-directory: infra
         run: sam build --cached
+
+  frontend:
+    name: Frontend (static page)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect frontend type
+        id: detect
+        run: |
+          if [ -f frontend/package.json ]; then
+            echo "type=node" >> "$GITHUB_OUTPUT"
+          else
+            echo "type=static" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Node build
+        if: steps.detect.outputs.type == 'node'
+        working-directory: frontend
+        run: |
+          corepack enable
+          npm ci
+          npm run build
+
+      - name: Static smoke check
+        if: steps.detect.outputs.type == 'static'
+        run: |
+          test -f frontend/index.html
+          echo "Static frontend present ✅"
+
+  all-green:
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    steps:
+      - run: echo "All checks passed ✅"
