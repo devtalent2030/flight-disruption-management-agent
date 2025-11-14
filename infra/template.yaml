@@ -1,37 +1,308 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: FDMA - minimal SAM template
+Description: Flight Disruption - Backend (Offers, Notify, Decision API + Orchestrator)
+
+Parameters:
+  TokenSecret:
+    Type: String
+    NoEcho: true
+    Description: HMAC secret for signing offer links
+  LinkBaseUrl:
+    Type: String
+    Default: https://demo.example.com/offer
+  OfferTtlMinutes:
+    Type: Number
+    Default: 60
+  NotifyChannel:
+    Type: String
+    AllowedValues: [SES, MOCK]
+    Default: MOCK
+  SesFromEmail:
+    Type: String
+    Default: ''
 
 Globals:
   Function:
-    Runtime: python3.11
-    Timeout: 30
+    Runtime: python3.12
     MemorySize: 256
+    Timeout: 15
+    Tracing: Active
+    Architectures: [x86_64]
+    Environment:
+      Variables:
+        OFFERS_TABLE: !Ref OffersTable
+        VOUCHERS_TABLE: !Ref VouchersTable
+        EVENTS_TABLE: !Ref EventsTable
+        LINK_BASE_URL: !Ref LinkBaseUrl
+        TOKEN_SECRET: !Ref TokenSecret
+        OFFER_TTL_MINUTES: !Ref OfferTtlMinutes
+        NOTIFY_CHANNEL: !Ref NotifyChannel
+        SES_FROM_EMAIL: !Ref SesFromEmail
 
 Resources:
-  EventSimulator:
+  PassengersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: Passengers
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: passengerId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: passengerId
+          KeyType: HASH
+    Metadata: { SamResourceId: PassengersTable }
+
+  PnrsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: PNRs
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pnrId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pnrId
+          KeyType: HASH
+    Metadata: { SamResourceId: PnrsTable }
+
+  FlightsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: Flights
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: flightNo
+          AttributeType: S
+      KeySchema:
+        - AttributeName: flightNo
+          KeyType: HASH
+    Metadata: { SamResourceId: FlightsTable }
+
+  OffersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: Offers
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: offerId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: offerId
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
+    Metadata: { SamResourceId: OffersTable }
+
+  VouchersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: Vouchers
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: voucherId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: voucherId
+          KeyType: HASH
+    Metadata: { SamResourceId: VouchersTable }
+
+  EventsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: Events
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: eventId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: eventId
+          KeyType: HASH
+    Metadata: { SamResourceId: EventsTable }
+
+  CreateOfferDLQ:
+    Type: AWS::SQS::Queue
+    Properties: { QueueName: create-offer-dlq }
+    Metadata: { SamResourceId: CreateOfferDLQ }
+
+  NotifyPassengerDLQ:
+    Type: AWS::SQS::Queue
+    Properties: { QueueName: notify-passenger-dlq }
+    Metadata: { SamResourceId: NotifyPassengerDLQ }
+
+  DecisionApiDLQ:
+    Type: AWS::SQS::Queue
+    Properties: { QueueName: decision-api-dlq }
+    Metadata: { SamResourceId: DecisionApiDLQ }
+
+  CreateOfferFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: event_simulator
-      Handler: handler.handler
-      CodeUri: ../backend/lambdas/event_simulator
+      FunctionName: create-offer
+      CodeUri: ../backend
+      Handler: lambdas.create_offer.handler.lambda_handler
+      DeadLetterQueue:
+        Type: SQS
+        TargetArn: !GetAtt CreateOfferDLQ.Arn
       Policies:
         - AWSLambdaBasicExecutionRole
+        - Version: '2012-10-17'
+          Statement:
+            - Sid: OffersPut
+              Effect: Allow
+              Action: [dynamodb:PutItem, dynamodb:UpdateItem]
+              Resource: !GetAtt OffersTable.Arn
+            - Sid: EventsPut
+              Effect: Allow
+              Action: [dynamodb:PutItem]
+              Resource: !GetAtt EventsTable.Arn
+    Metadata: { SamResourceId: CreateOfferFunction }
 
-  ImpactedPNRFinder:
+  NotifyPassengerFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: impacted_pnr_finder
-      Handler: handler.handler
-      CodeUri: ../backend/lambdas/impacted_pnr_finder
+      FunctionName: notify-passenger
+      CodeUri: ../backend
+      Handler: lambdas.notify_passenger.handler.lambda_handler
+      DeadLetterQueue:
+        Type: SQS
+        TargetArn: !GetAtt NotifyPassengerDLQ.Arn
       Policies:
         - AWSLambdaBasicExecutionRole
+        - Version: '2012-10-17'
+          Statement:
+            - Sid: OffersGet
+              Effect: Allow
+              Action: [dynamodb:GetItem]
+              Resource: !GetAtt OffersTable.Arn
+            - Sid: EventsPut
+              Effect: Allow
+              Action: [dynamodb:PutItem]
+              Resource: !GetAtt EventsTable.Arn
+            - Sid: SesSend
+              Effect: Allow
+              Action: [ses:SendEmail, ses:SendRawEmail]
+              Resource: '*'
+    Metadata: { SamResourceId: NotifyPassengerFunction }
 
-  FdmaStateMachine:
+  DecisionApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: decision-api
+      StageName: prod
+      Cors:
+        AllowMethods: '''GET,POST,OPTIONS'''
+        AllowHeaders: '''*'''
+        AllowOrigin: '''*'''
+      EndpointConfiguration: REGIONAL
+    Metadata: { SamResourceId: DecisionApi }
+
+  DecisionApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: decision-api
+      CodeUri: ../backend
+      Handler: lambdas.decision_api.handler.lambda_handler
+      DeadLetterQueue:
+        Type: SQS
+        TargetArn: !GetAtt DecisionApiDLQ.Arn
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - Version: '2012-10-17'
+          Statement:
+            - Sid: OffersRW
+              Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:UpdateItem, dynamodb:PutItem, dynamodb:Scan]
+              Resource: !GetAtt OffersTable.Arn
+            - Sid: EventsPut
+              Effect: Allow
+              Action: [dynamodb:PutItem]
+              Resource: !GetAtt EventsTable.Arn
+      Events:
+        GetOffer:
+          Type: Api
+          Properties:
+            RestApiId: !Ref DecisionApi
+            Path: /offer/{token}
+            Method: GET
+        AcceptOffer:
+          Type: Api
+          Properties:
+            RestApiId: !Ref DecisionApi
+            Path: /offer/{token}/accept
+            Method: POST
+        NextOffer:
+          Type: Api
+          Properties:
+            RestApiId: !Ref DecisionApi
+            Path: /offer/{token}/next
+            Method: POST
+        DeclineOffer:
+          Type: Api
+          Properties:
+            RestApiId: !Ref DecisionApi
+            Path: /offer/{token}/decline
+            Method: POST
+    Metadata: { SamResourceId: DecisionApiFunction }
+
+  OfferFlowLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/states/offer-flow
+      RetentionInDays: 7
+    Metadata: { SamResourceId: OfferFlowLogGroup }
+
+  OfferFlowStateMachine:
     Type: AWS::Serverless::StateMachine
     Properties:
-      Name: fdma_state_machine
+      Name: offer-flow
       DefinitionUri: ../backend/step_functions/state_machine.asl.json
+      DefinitionSubstitutions:
+        CreateOfferFunctionArn: !GetAtt CreateOfferFunction.Arn
+        NotifyPassengerFunctionArn: !GetAtt NotifyPassengerFunction.Arn
       Policies:
-        - LambdaInvokePolicy:
-            FunctionName: !Ref ImpactedPNRFinder
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action: [lambda:InvokeFunction]
+              Resource:
+                - !GetAtt CreateOfferFunction.Arn
+                - !GetAtt NotifyPassengerFunction.Arn
+            - Effect: Allow
+              Action:
+                - logs:CreateLogDelivery
+                - logs:GetLogDelivery
+                - logs:UpdateLogDelivery
+                - logs:DeleteLogDelivery
+                - logs:ListLogDeliveries
+                - logs:PutResourcePolicy
+                - logs:DescribeResourcePolicies
+                - logs:DescribeLogGroups
+              Resource: '*'
+      Tracing:
+        Enabled: true
+      Logging:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt OfferFlowLogGroup.Arn
+        IncludeExecutionData: true
+        Level: ALL
+    Metadata: { SamResourceId: OfferFlowStateMachine }
+
+Outputs:
+  DecisionApiUrl:
+    Description: Base URL for the Decision API
+    Value: !Sub "https://${DecisionApi}.execute-api.${AWS::Region}.amazonaws.com/prod"
+
+  CreateOfferFunctionArn:
+    Description: ARN of the CreateOffer Lambda
+    Value: !GetAtt CreateOfferFunction.Arn
+
+  NotifyPassengerFunctionArn:
+    Description: ARN of the NotifyPassenger Lambda
+    Value: !GetAtt NotifyPassengerFunction.Arn
+
+  OfferFlowArn:
+    Description: Step Functions state machine ARN
+    Value: !Ref OfferFlowStateMachine
