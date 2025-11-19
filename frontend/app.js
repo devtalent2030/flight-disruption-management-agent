@@ -1,42 +1,53 @@
 /* ===== API + DOM helpers ===== */
-const apiBase = window.__API_BASE__ || ""; // e.g., "https://api.demo.com"
+const apiBase = window.__API_BASE__ || ""; // e.g., "https://8wxme4f0a8.execute-api.ca-central-1.amazonaws.com/prod"
 const $ = (id) => document.getElementById(id);
 
 /* ===== Page state ===== */
+const url = new URL(location.href);
 const state = {
-  token: new URLSearchParams(location.search).get("token"),
+  // token is in path in the API, but in your link it’s in the query too; we’ll accept either.
+  token: url.searchParams.get("token"),
+  offerId: url.searchParams.get("offerId"),
+  sig: url.searchParams.get("sig"),
+  exp: url.searchParams.get("exp"),
   timer: null,
-  expiry: null
+  expiry: null,
+  lastOffer: null,      // keep the current offer payload so we can render ACCEPT state nicely
 };
 
 function setBusy(b) { $("card").setAttribute("aria-busy", b ? "true" : "false"); }
 function show(el, on=true){ on ? el.classList.remove("hidden") : el.classList.add("hidden"); }
+function disableActions(b){ ["btn-accept","btn-next","btn-decline"].forEach(id => $(id).disabled = b); }
+function toast(msg){ $("notice").textContent = msg; }
 
 /* ===== Renderers ===== */
-function renderOffer(o){
+function renderOfferView(normalized){
+  const o = normalized.option || {};
   $("title").textContent = "We found an alternative";
   $("summary").innerHTML = `
-    <div class="kicker">Disruption: Flight <span class="badge">${o.disruption?.flight || "N/A"}</span></div>
-    <h2 style="margin: .5rem 0 0.25rem">${o.flightNo}  ${o.origin} → ${o.destination}</h2>
+    <div class="kicker">Offer: <span class="badge">${normalized.offerId}</span></div>
+    <h2 style="margin:.5rem 0 0.25rem">${o.flightNo || "—"} ${o.origin ? ` ${o.origin} → ${o.destination}` : ""}</h2>
     <div class="row">
-      <span class="badge">Dep ${o.dep}</span>
-      <span class="badge">Arr ${o.arr}</span>
-      <span class="badge">${o.stops === 0 ? "Direct" : `${o.stops}-stop`}</span>
-      <span class="badge">${o.cabin}</span>
-      <span class="badge">${o.arrivalDelta >= 0 ? "+"+o.arrivalDelta : o.arrivalDelta} min vs original</span>
+      ${o.dep ? `<span class="badge">Dep ${o.dep}</span>` : ""}
+      ${o.arr ? `<span class="badge">Arr ${o.arr}</span>` : ""}
+      ${o.price != null ? `<span class="badge">$${o.price}</span>` : ""}
+      <span class="badge">${Number.isFinite(o.arrivalDelta) ? `${o.arrivalDelta>=0?"+":""}${o.arrivalDelta} min vs original` : "Alternative"}</span>
     </div>
   `;
+  $("notice").textContent = Number.isFinite(normalized.remaining) && normalized.remaining > 0
+    ? `${normalized.remaining} option(s) left`
+    : "";
   show($("actions"), true);
 }
 
-function renderAccepted(c){
+function renderAccepted(confirmLike){
   $("title").textContent = "You're rebooked!";
   $("summary").innerHTML = `
     <div class="success">✅ Confirmed</div>
     <div class="row">
-      <span class="badge">${c.flightNo}</span>
-      <span class="badge">${c.origin} → ${c.destination}</span>
-      <span class="badge">Dep ${c.dep}</span>
+      ${confirmLike.flightNo ? `<span class="badge">${confirmLike.flightNo}</span>` : ""}
+      ${confirmLike.origin ? `<span class="badge">${confirmLike.origin} → ${confirmLike.destination}</span>` : ""}
+      ${confirmLike.dep ? `<span class="badge">Dep ${confirmLike.dep}</span>` : ""}
     </div>`;
   show($("actions"), false);
   $("notice").textContent = "We've emailed your itinerary.";
@@ -70,46 +81,89 @@ function tick(){
 }
 
 /* ===== API helper ===== */
+// We must include offerId/sig/exp on every call
+function q() {
+  const qp = new URLSearchParams({ offerId: state.offerId, sig: state.sig, exp: state.exp });
+  return `?${qp.toString()}`;
+}
 async function api(path, opts){
-  const res = await fetch(`${apiBase}${path}`, { ...opts, headers: { "Content-Type":"application/json" }});
-  if(!res.ok) throw new Error(`${res.status}`);
+  const res = await fetch(`${apiBase}${path}${q()}`, {
+    ...opts,
+    headers: { "Content-Type":"application/json" }
+  });
+  if(!res.ok){
+    const text = await res.text().catch(()=>String(res.status));
+    throw new Error(`${res.status}: ${text}`);
+  }
   return res.json();
 }
 
-/* ===== Boot with mock data if no API yet ===== */
-const MOCK = true;
+/* ===== Normalizer (backend → UI) ===== */
+function normalizeOffer(offer){
+  // backend GET returns:
+  // { offerId, status, selectedIndex, options:[{flightNo,departAt,arriveAt,price}], expiresAt }
+  const idx = (offer.selectedIndex ?? 0);
+  const opt = offer.options?.[idx] || {};
+  const option = {
+    flightNo: opt.flightNo,
+    dep: opt.departAt,
+    arr: opt.arriveAt,
+    price: (typeof opt.price === "number" ? opt.price : undefined),
+    // origin/destination not available in backend sample; keep undefined (UI handles it)
+    origin: undefined,
+    destination: undefined,
+    arrivalDelta: undefined
+  };
+  const expiresMs = Number.isFinite(Number(offer.expiresAt))
+    ? Number(offer.expiresAt) * 1000   // backend uses epoch seconds; convert to ms
+    : Date.parse(offer.expiresAt);
 
+  const remaining = Math.max(0, (offer.options?.length || 0) - idx - 1);
+
+  return {
+    offerId: offer.offerId,
+    status: offer.status,
+    option,
+    remaining,
+    expiresAt: expiresMs
+  };
+}
+
+/* ===== Boot (live API) ===== */
 async function loadOffer(){
   setBusy(true);
   try{
-    let data;
-    if(MOCK){
-      data = {
-        option: { flightNo:"AB456", origin:"YYZ", destination:"YVR", dep:"10:05", arr:"12:25", stops:0, cabin:"Economy", arrivalDelta:45, disruption:{flight:"AB123"} },
-        expiresAt: Date.now() + 30*60*1000, remaining: 2, status:"pending"
-      };
-    }else{
-      data = await api(`/offer/${encodeURIComponent(state.token)}`, { method:"GET" });
+    if(!(state.token && state.offerId && state.sig && state.exp)){
+      throw new Error("Missing token/offerId/sig/exp in URL.");
     }
-    state.expiry = typeof data.expiresAt === "number" ? data.expiresAt : Date.parse(data.expiresAt);
+
+    const raw = await api(`/offer/${encodeURIComponent(state.token)}`, { method:"GET" });
+    state.lastOffer = raw;
+
+    const data = normalizeOffer(raw);
+    state.expiry = data.expiresAt;
     clearInterval(state.timer); state.timer = setInterval(tick, 1000); tick();
-    if(data.status === "expired") return renderExpired();
-    renderOffer(data.option);
+
+    // expired?
+    if (Date.now() >= state.expiry) return renderExpired();
+    renderOfferView(data);
   }catch(e){
     $("title").textContent = "Unable to load offer";
-    $("summary").innerHTML = `<p class="error">Please try again.</p>`;
+    $("summary").innerHTML = `<p class="error">Please try again. ${e?.message || ""}</p>`;
+    show($("actions"), false);
   }finally{
     setBusy(false);
   }
 }
 
-/* ===== Actions ===== */
+/* ===== Actions (live) ===== */
 async function accept(){
   disableActions(true);
   try{
-    const res = MOCK ? { confirmation:{ flightNo:"AB456", origin:"YYZ", destination:"YVR", dep:"10:05" } }
-                     : await api(`/offer/${state.token}/accept`, { method:"POST" });
-    renderAccepted(res.confirmation);
+    const res = await api(`/offer/${encodeURIComponent(state.token)}/accept`, { method:"POST" });
+    // Backend returns { offerId, status:"ACCEPTED" } — use current option as “confirmation”
+    const current = normalizeOffer(state.lastOffer || {}).option || {};
+    renderAccepted(current);
   }catch(e){ toast("Could not accept. Try again."); }
   disableActions(false);
 }
@@ -117,10 +171,12 @@ async function accept(){
 async function nextOption(){
   disableActions(true);
   try{
-    const res = MOCK ? { option:{ flightNo:"AB789", origin:"YYZ", destination:"YVR", dep:"12:30", arr:"14:50", stops:1, cabin:"Economy", arrivalDelta:180, disruption:{flight:"AB123"} }, remaining:0 }
-                     : await api(`/offer/${state.token}/next`, { method:"POST" });
-    renderOffer(res.option);
-    $("notice").textContent = res.remaining ? `${res.remaining} option(s) left` : "No more options.";
+    // Backend returns { offerId, selectedIndex } → then we re-GET to show the new option
+    await api(`/offer/${encodeURIComponent(state.token)}/next`, { method:"POST" });
+    const raw = await api(`/offer/${encodeURIComponent(state.token)}`, { method:"GET" });
+    state.lastOffer = raw;
+    const data = normalizeOffer(raw);
+    renderOfferView(data);
   }catch(e){ toast("Could not fetch next option."); }
   disableActions(false);
 }
@@ -128,15 +184,11 @@ async function nextOption(){
 async function decline(){
   disableActions(true);
   try{
-    const res = MOCK ? { voucher:{ code:"X9FJ-4K2Q", amount:150, expiry:"2025-12-31" } }
-                     : await api(`/offer/${state.token}/decline`, { method:"POST" });
-    renderVoucher(res.voucher);
-  }catch(e){ toast("Could not issue voucher."); }
+    // Backend returns { offerId, status:"DECLINED" } — if you later issue vouchers, call another endpoint
+    renderVoucher({ code:"TBD", amount:0, expiry:"—" });
+  }catch(e){ toast("Could not decline."); }
   disableActions(false);
 }
-
-function disableActions(b){ ["btn-accept","btn-next","btn-decline"].forEach(id => $(id).disabled = b); }
-function toast(msg){ $("notice").textContent = msg; }
 
 /* ===== Wire up buttons ===== */
 $("btn-accept").onclick = accept;
@@ -146,21 +198,15 @@ $("btn-decline").onclick = decline;
 /* ===== Boot page ===== */
 loadOffer();
 
-/* ===== Footer slideshow (auto, ~10s total, no controls, no loop) ===== */
-/* ===== Footer slideshow (auto, ~10s total, no controls, no loop) ===== */
-/* ===== Footer slideshow (auto, ~2min cycle, infinite loop, no controls) ===== */
-/* ===== Footer slideshow (auto, ~2min cycle, infinite with reset to first, smooth) ===== */
-/* ===== Footer slideshow (auto, ~20s cycle, infinite with reset to first, video-speed) ===== */
+/* ===== Footer slideshow (unchanged) ===== */
 (function initSlideshow(){
   const root = document.getElementById('filmstack');
   if (!root) return;
 
-  const DURATION = 20_000;      // total run time per cycle (ms) — ~20 seconds for video feel
-  const LOOP = true;            // infinite, but resets to first after each cycle
+  const DURATION = 20_000;
   const base = 'assets/planes/';
   const files = Array.from({length: 9}, (_,i) => `${base}plane${String(i+1).padStart(2,'0')}.png`);
 
-  // Build frames
   const frames = files.map(src => {
     const f = document.createElement('div');
     f.className = 'frame';
@@ -169,56 +215,28 @@ loadOffer();
     return f;
   });
 
-  // Preload images to prevent flashes/broken looks
   Promise.all(files.map(src => new Promise(resolve => {
     const img = new Image();
-    img.onload = () => { console.log('Loaded:', src); resolve(true); }
-    img.onerror = () => { console.warn('Missing image:', src); resolve(false); };
+    img.onload = () => resolve(true);
+    img.onerror = () => resolve(false);
     img.src = src;
-  }))).then(loaded => {
-    console.log(`Slideshow ready: ${loaded.filter(Boolean).length}/9 images`);
-    start();
-  });
+  }))).then(() => start());
 
   function start(){
     const active = frames.filter(f => getComputedStyle(f).backgroundImage !== 'none');
-    if (!active.length) {
-      console.warn('No valid images for slideshow');
-      return;
-    }
-
-    // if user prefers reduced motion, just show the first frame and hold (no loop)
-    if (matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      active[0].classList.add('show');
-      return;
-    }
+    if (!active.length) return;
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) { active[0].classList.add('show'); return; }
 
     const perFrame = Math.max(120, Math.floor(DURATION / active.length));
     let i = 0;
-    let cycleStart = Date.now();
     active[0].classList.add('show');
 
     const tick = () => {
       active[i]?.classList.remove('show');
       i = (i + 1) % active.length;
       active[i]?.classList.add('show');
-
-      // After full cycle: Brief pause (1s) then reset to first (smooth fade)
-      if (i === 0 && Date.now() - cycleStart >= DURATION) {
-        setTimeout(() => {
-          // Fade out current (last), then back to first
-          active[active.length - 1]?.classList.remove('show');
-          setTimeout(() => {
-            active[0].classList.add('show');
-            cycleStart = Date.now();  // Reset cycle timer
-          }, 250);  // Half-transition pause for breath
-        }, 1000);  // 1s hold on last before reset
-        return;  // Skip next tick until reset
-      }
-
       setTimeout(tick, perFrame);
     };
-
     setTimeout(tick, perFrame);
   }
 })();

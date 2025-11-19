@@ -5,6 +5,10 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Rebooking Offer</title>
   <link rel="stylesheet" href="./app.css" />
+  <script>
+    // Set to your real API Gateway base URL (CloudFormation output: DecisionApiUrl)
+    window.__API_BASE__ = "https://8wxme4f0a8.execute-api.ca-central-1.amazonaws.com/prod";
+  </script>
 </head>
 <body>
   <main id="app" class="container">
@@ -28,62 +32,62 @@
   </main>
 
   <footer class="footer">
-  <div id="filmstack" class="filmstack" aria-hidden="true"></div>
-  <div class="footer-meta">
-    <!-- Card 1: About Blurb -->
-    <div class="card footer-card">
-      <div class="card-inner">
-        <h3>Airline Demo: Seamless Skies</h3>
-        <p>At Airline Demo, we're redefining travel recovery. Our AI-powered agent spots disruptions and gets you back in the air—fast, fair, and frictionless. From rebookings to vouchers, we've got your journey covered.</p>
-      </div>
-    </div>
-
-    <!-- Card 2: Disruption Tips -->
-    <div class="card footer-card">
-      <div class="card-inner">
-        <h4>Travel Tips During Delays</h4>
-        <ul>
-          <li>Stay connected: Enable notifications for real-time updates.</li>
-          <li>Pack smart: Keep essentials in carry-on for quick re-routes.</li>
-          <li>Know your rights: Automatic compensation for eligible delays.</li>
-          <li>Upgrade easy: Use vouchers toward premium seats next time.</li>
-        </ul>
-      </div>
-    </div>
-
-    <!-- Card 3: CTA -->
-    <div class="card footer-card">
-      <div class="card-inner">
-        <h4>Ready to Fly?</h4>
-        <p>Experience the future of air travel. <a href="#">Book a demo flight</a> or <a href="#">join our beta</a>.</p>
-      </div>
-    </div>
-
-    <!-- Card 4: Legal & Contact -->
-    <div class="card footer-card">
-      <div class="card-inner">
-        <div class="meta-top">
-          <span>© 2025 Airline Demo. All rights reserved.</span>
-          <span class="meta-links">
-            <a href="#" aria-label="Privacy Policy">Privacy</a> •
-            <a href="#" aria-label="Terms of Service">Terms</a> •
-            <a href="#" aria-label="Cookie Policy">Cookies</a> •
-            <a href="#" aria-label="Accessibility">Accessibility</a>
-          </span>
+    <div id="filmstack" class="filmstack" aria-hidden="true"></div>
+    <div class="footer-meta">
+      <!-- Card 1: About Blurb -->
+      <div class="card footer-card">
+        <div class="card-inner">
+          <h3>Airline Demo: Seamless Skies</h3>
+          <p>At Airline Demo, we're redefining travel recovery. Our AI-powered agent spots disruptions and gets you back in the air—fast, fair, and frictionless. From rebookings to vouchers, we've got your journey covered.</p>
         </div>
-        <div class="meta-bottom">
-          <span class="contact">Questions? Call 1-800-FLY-DEMO (1-800-359-336) | Email: support@airlinedemo.com | 24/7 Support Available</span>
-          <div class="social-icons">
-            <a href="#" aria-label="X (Twitter)" title="Follow us on X">🐦</a>
-            <a href="#" aria-label="Facebook" title="Like us on Facebook">📘</a>
-            <a href="#" aria-label="Instagram" title="Follow on Instagram">📷</a>
-            <a href="#" aria-label="LinkedIn" title="Connect on LinkedIn">💼</a>
+      </div>
+
+      <!-- Card 2: Disruption Tips -->
+      <div class="card footer-card">
+        <div class="card-inner">
+          <h4>Travel Tips During Delays</h4>
+          <ul>
+            <li>Stay connected: Enable notifications for real-time updates.</li>
+            <li>Pack smart: Keep essentials in carry-on for quick re-routes.</li>
+            <li>Know your rights: Automatic compensation for eligible delays.</li>
+            <li>Upgrade easy: Use vouchers toward premium seats next time.</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- Card 3: CTA -->
+      <div class="card footer-card">
+        <div class="card-inner">
+          <h4>Ready to Fly?</h4>
+          <p>Experience the future of air travel. <a href="#">Book a demo flight</a> or <a href="#">join our beta</a>.</p>
+        </div>
+      </div>
+
+      <!-- Card 4: Legal & Contact -->
+      <div class="card footer-card">
+        <div class="card-inner">
+          <div class="meta-top">
+            <span>© 2025 Airline Demo. All rights reserved.</span>
+            <span class="meta-links">
+              <a href="#" aria-label="Privacy Policy">Privacy</a> •
+              <a href="#" aria-label="Terms of Service">Terms</a> •
+              <a href="#" aria-label="Cookie Policy">Cookies</a> •
+              <a href="#" aria-label="Accessibility">Accessibility</a>
+            </span>
+          </div>
+          <div class="meta-bottom">
+            <span class="contact">Questions? Call 1-800-FLY-DEMO (1-800-359-336) | Email: support@airlinedemo.com | 24/7 Support Available</span>
+            <div class="social-icons">
+              <a href="#" aria-label="X (Twitter)" title="Follow us on X">🐦</a>
+              <a href="#" aria-label="Facebook" title="Like us on Facebook">📘</a>
+              <a href="#" aria-label="Instagram" title="Follow on Instagram">📷</a>
+              <a href="#" aria-label="LinkedIn" title="Connect on LinkedIn">💼</a>
+            </div>
           </div>
         </div>
       </div>
     </div>
-  </div>
-</footer>
+  </footer>
 
   <script src="./app.js"></script>
 </body>

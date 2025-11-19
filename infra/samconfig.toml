@@ -1,0 +1,14 @@
+version = 0.1
+
+[default.deploy.parameters]
+stack_name = "fdm-backend"
+resolve_s3 = true
+s3_prefix = "fdm-backend"
+region = "ca-central-1"
+confirm_changeset = true
+capabilities = "CAPABILITY_IAM"
+parameter_overrides = "LinkBaseUrl=\"https://demo.example.com/offer\" OfferTtlMinutes=\"60\" NotifyChannel=\"MOCK\" SesFromEmail=\"\""
+image_repositories = []
+
+[default.global.parameters]
+region = "ca-central-1"
